@@ -1,0 +1,26 @@
+@model ArticleDetail
+
+<p class="detail-text">@Model.Content</p>
+
+<div class="detail-vector">
+    <h3>Stored vector</h3>
+    <dl>
+        <div>
+            <dt>Column</dt>
+            <dd><code>vector(@Model.EmbeddingDimensions)</code></dd>
+        </div>
+        <div>
+            <dt>Came back with the entity</dt>
+            <dd>@(Model.EmbeddingLoadedWithEntity ? "yes" : "no")</dd>
+        </div>
+        <div>
+            <dt>First values</dt>
+            <dd><code>[@string.Join(", ", Model.EmbeddingPreview.Select(v => v.ToString("F4"))), …]</code></dd>
+        </div>
+    </dl>
+    <p class="muted">
+        EF Core 11 leaves vector columns out of the SELECT that loads an entity, so reading the
+        article did not fetch its 1,536 floats. The values above come from a second query that
+        projects the property explicitly.
+    </p>
+</div>

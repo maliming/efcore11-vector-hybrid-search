@@ -1,0 +1,228 @@
+A run recorded on 2026-09-17 against Azure SQL Database (12.0.2000.8, engine edition 5, full-text
+installed), kept so the numbers quoted in the article stay tied to a server version. The host name
+is redacted; rerun the probe to regenerate this file.
+
+Two steps report FAILED on purpose: 'Hybrid search A' and the workaround next to it are the
+single-query shape from the documentation, and their exception is what the article describes.
+================================================================================================
+
+target: <your-server>.database.windows.net/VectorLab (Azure SQL Database)
+
+=== Model-configured vector and full-text indexes: the DDL EF generates ===
+  CREATE FULLTEXT CATALOG [ftCatalog];
+  GO
+  CREATE TABLE [ModelledArticles] (
+      [Id] int NOT NULL,
+      [Title] nvarchar(200) NOT NULL,
+      [Content] nvarchar(max) NOT NULL,
+      [Embedding] vector(8) NOT NULL,
+      CONSTRAINT [PK_ModelledArticles] PRIMARY KEY ([Id])
+  );
+  GO
+  CREATE VECTOR INDEX [IX_ModelledArticles_Embedding] ON [ModelledArticles]([Embedding]) WITH (METRIC = 'cosine', TYPE = 'DiskANN');
+  GO
+  CREATE FULLTEXT INDEX ON [ModelledArticles]([Title], [Content]) KEY INDEX [PK_ModelledArticles] ON [ftCatalog];
+  GO
+RESULT: OK
+
+=== Server info ===
+  12.0.2000.8 | SQL Azure | engine=5 | fulltext=1
+RESULT: OK
+
+=== Prepare database ===
+  provisioned by Azure, compatibility_level = 170, PREVIEW_FEATURES not required
+RESULT: OK
+
+=== Recreate Articles table ===
+  table created
+RESULT: OK
+
+=== Seed the adversarial corpus ===
+  120 rows: Both=12, LexicalOnly=12, Neither=72, SemanticOnly=24
+RESULT: OK
+
+=== Vector properties are not projected by default (EF 11 change) ===
+info: 2026/09/17 20:37:56.468 RelationalEventId.CommandExecuted[20101] (Microsoft.EntityFrameworkCore.Database.Command) 
+      Executed DbCommand (251ms) [Parameters=[@p='?' (DbType = Int32)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(@p) [a].[Id], [a].[Content], [a].[Recall], [a].[Title], [a].[Topic]
+      FROM [Articles] AS [a]
+      ORDER BY [a].[Id]
+  loaded 2, first embedding length = 0
+RESULT: OK
+
+=== Exact kNN with EF.Functions.VectorDistance ===
+info: 2026/09/17 20:37:56.738 RelationalEventId.CommandExecuted[20101] (Microsoft.EntityFrameworkCore.Database.Command) 
+      Executed DbCommand (253ms) [Parameters=[@p='?' (DbType = Int32), @query='?' (Size = 40) (DbType = Binary)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(@p) [a].[Id], [a].[Topic], [a].[Recall], [a].[Title]
+      FROM [Articles] AS [a]
+      ORDER BY VECTOR_DISTANCE('cosine', [a].[Embedding], @query)
+  SemanticOnly [astronomy] Observation log 26
+  SemanticOnly [astronomy] Observation log 34
+  SemanticOnly [astronomy] Observation log 18
+  SemanticOnly [astronomy] Observation log 32
+  Both         [astronomy] Deep sky survey 8
+RESULT: OK
+
+=== CREATE VECTOR INDEX ===
+  IX_Articles_Embedding type=DiskANN metric=COSINE
+RESULT: OK
+
+=== ANN search: VectorSearch() + WithApproximate() ===
+info: 2026/09/17 20:37:57.706 RelationalEventId.CommandExecuted[20101] (Microsoft.EntityFrameworkCore.Database.Command) 
+      Executed DbCommand (270ms) [Parameters=[@p1='?' (DbType = Int32), @p='?' (Size = 40) (DbType = Binary)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(@p1) WITH APPROXIMATE [a].[Id], [a].[Content], [a].[Recall], [a].[Title], [a].[Topic], [v].[Distance]
+      FROM VECTOR_SEARCH(
+          TABLE = [Articles] AS [a],
+          COLUMN = [Embedding],
+          SIMILAR_TO = @p,
+          METRIC = 'cosine'
+      ) AS [v]
+      ORDER BY [v].[Distance]
+  SemanticOnly [astronomy] Observation log 26 distance=0.011184
+  SemanticOnly [astronomy] Observation log 34 distance=0.012509
+  SemanticOnly [astronomy] Observation log 18 distance=0.013448
+  SemanticOnly [astronomy] Observation log 32 distance=0.014496
+  Both         [astronomy] Deep sky survey 8 distance=0.018356
+RESULT: OK
+
+=== Create full-text catalog and index ===
+  catalog and index created
+RESULT: OK
+
+=== Wait for full-text population ===
+  populated after 2 checks, 120 rows indexed
+RESULT: OK
+
+=== Full-text ranking with FreeTextTable() ===
+info: 2026/09/17 20:38:02.639 RelationalEventId.CommandExecuted[20101] (Microsoft.EntityFrameworkCore.Database.Command) 
+      Executed DbCommand (1,370ms) [Parameters=[@p='?' (Size = 4000), @p1='?' (DbType = Int32)], CommandType='Text', CommandTimeout='30']
+      SELECT [a0].[Id], [a0].[Topic], [a0].[Recall], [a0].[Title], [f].[RANK] AS [Rank]
+      FROM FREETEXTTABLE([Articles], *, @p, @p1) AS [f]
+      INNER JOIN [Articles] AS [a0] ON [f].[KEY] = [a0].[Id]
+      ORDER BY [f].[RANK] DESC, [a0].[Id]
+  Both         [astronomy] Deep sky survey 4 rank=86
+  Both         [astronomy] Deep sky survey 9 rank=70
+  Both         [astronomy] Deep sky survey 6 rank=68
+  Both         [astronomy] Deep sky survey 8 rank=68
+  Both         [astronomy] Deep sky survey 3 rank=49
+RESULT: OK
+
+=== Full-text ranking with ContainsTable() ===
+info: 2026/09/17 20:38:02.905 RelationalEventId.CommandExecuted[20101] (Microsoft.EntityFrameworkCore.Database.Command) 
+      Executed DbCommand (262ms) [Parameters=[@p='?' (Size = 4000), @p1='?' (DbType = Int32)], CommandType='Text', CommandTimeout='30']
+      SELECT [a0].[Id], [a0].[Topic], [a0].[Recall], [a0].[Title], [c].[RANK] AS [Rank]
+      FROM CONTAINSTABLE([Articles], *, @p, @p1) AS [c]
+      INNER JOIN [Articles] AS [a0] ON [c].[KEY] = [a0].[Id]
+      ORDER BY [c].[RANK] DESC, [a0].[Id]
+  Both         [astronomy] Deep sky survey 1 rank=0
+  Both         [astronomy] Deep sky survey 2 rank=0
+  Both         [astronomy] Deep sky survey 3 rank=0
+  Both         [astronomy] Deep sky survey 4 rank=0
+  Both         [astronomy] Deep sky survey 5 rank=0
+RESULT: OK
+
+=== Isolate the failure - scalars only, no entity across the FULL JOIN ===
+  materialized 10 rows; lexical-only=5, semantic-only=0
+RESULT: OK
+
+=== Isolate the failure - conditional entity across the FULL JOIN ===
+  materialized 10 titles
+RESULT: OK
+
+=== Isolate the failure - entity plus nullable scalars, no score expression ===
+  materialized 10 rows
+RESULT: OK
+
+=== Hybrid search A - RRF exactly as the docs write it ===
+info: 2026/09/17 20:38:04.092 RelationalEventId.CommandExecuted[20101] (Microsoft.EntityFrameworkCore.Database.Command) 
+      Executed DbCommand (288ms) [Parameters=[@p4='?' (DbType = Int32), @p='?' (Size = 4000), @p1='?' (DbType = Int32), @p3='?' (DbType = Int32), @p2='?' (Size = 40) (DbType = Binary)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(@p4) [a0].[Id], [a0].[Content], [a0].[Recall], [a0].[Title], [a0].[Topic], [f].[RANK], [v0].[Id], [v0].[Content], [v0].[Recall], [v0].[Title], [v0].[Topic], [v0].[Distance], CASE
+          WHEN [f].[RANK] IS NULL THEN 0.0E0
+          ELSE 1.0E0 / CAST(20 + [f].[RANK] AS float)
+      END + CASE
+          WHEN [v0].[Distance] IS NULL THEN 0.0E0
+          ELSE 1.0E0 / (20.0E0 + [v0].[Distance])
+      END
+      FROM FREETEXTTABLE([Articles], *, @p, @p1) AS [f]
+      INNER JOIN [Articles] AS [a0] ON [f].[KEY] = [a0].[Id]
+      FULL JOIN (
+          SELECT TOP(@p3) WITH APPROXIMATE [a1].[Id], [a1].[Content], [a1].[Recall], [a1].[Title], [a1].[Topic], [v].[Distance]
+          FROM VECTOR_SEARCH(
+              TABLE = [Articles] AS [a1],
+              COLUMN = [Embedding],
+              SIMILAR_TO = @p2,
+              METRIC = 'cosine'
+          ) AS [v]
+          ORDER BY [v].[Distance]
+      ) AS [v0] ON [a0].[Id] = [v0].[Id]
+      ORDER BY CASE
+          WHEN [f].[RANK] IS NULL THEN 0.0E0
+          ELSE 1.0E0 / CAST(20 + [f].[RANK] AS float)
+      END + CASE
+          WHEN [v0].[Distance] IS NULL THEN 0.0E0
+          ELSE 1.0E0 / (20.0E0 + [v0].[Distance])
+      END DESC
+RESULT: FAILED — InvalidOperationException
+  InvalidOperationException: Nullable object must have a value.
+    at lambda_method163(Closure, QueryContext, DbDataReader, ResultContext, SingleQueryResultCoordinator)
+    at Microsoft.EntityFrameworkCore.Query.Internal.SingleQueryingEnumerable`1.AsyncEnumerator.MoveNextAsync()
+    at Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.ToListAsync[TSource](IQueryable`1 source, CancellationToken cancellationToken)
+    at Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.ToListAsync[TSource](IQueryable`1 source, CancellationToken cancellationToken)
+    at Program.<>c__DisplayClass0_0.<<<Main>$>b__17>d.MoveNext() in /Users/maliming/Downloads/EF Core 11 vector search and hybrid search/demo/VectorLab/Program.cs:line 373
+    --- End of stack trace from previous location ---
+    at Program.<>c__DisplayClass0_0.<<<Main>$>b__17>d.MoveNext() in /Users/maliming/Downloads/EF Core 11 vector search and hybrid search/demo/VectorLab/Program.cs:line 407
+    --- End of stack trace from previous location ---
+
+=== Workaround - same score without calling .Value ===
+RESULT: FAILED — InvalidOperationException
+  InvalidOperationException: Nullable object must have a value.
+    at lambda_method179(Closure, QueryContext, DbDataReader, ResultContext, SingleQueryResultCoordinator)
+    at Microsoft.EntityFrameworkCore.Query.Internal.SingleQueryingEnumerable`1.AsyncEnumerator.MoveNextAsync()
+    at Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.ToListAsync[TSource](IQueryable`1 source, CancellationToken cancellationToken)
+    at Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.ToListAsync[TSource](IQueryable`1 source, CancellationToken cancellationToken)
+    at Program.<>c__DisplayClass0_0.<<<Main>$>b__18>d.MoveNext() in /Users/maliming/Downloads/EF Core 11 vector search and hybrid search/demo/VectorLab/Program.cs:line 420
+    --- End of stack trace from previous location ---
+    at Program.<>c__DisplayClass0_0.<<<Main>$>b__18>d.MoveNext() in /Users/maliming/Downloads/EF Core 11 vector search and hybrid search/demo/VectorLab/Program.cs:line 453
+    --- End of stack trace from previous location ---
+
+=== Hybrid search B - RRF over rank positions ===
+  recall       title                             lex#      sem#     score
+  Both         Deep sky survey 8                    4         5   0.03101
+  Both         Deep sky survey 1                    7        12   0.02881
+  Both         Deep sky survey 10                  10         9   0.02878
+  Both         Deep sky survey 5                    9        16   0.02765
+  Both         Deep sky survey 3                    8        19   0.02736
+  Both         Deep sky survey 4                    1         -   0.01639
+  SemanticOnly Observation log 26                   -         1   0.01639
+  Both         Deep sky survey 9                    2         -   0.01613
+  SemanticOnly Observation log 34                   -         2   0.01613
+  Both         Deep sky survey 6                    3         -   0.01587
+RESULT: OK
+
+=== Article snippet - approximate path ===
+  title                     lexical#  semantic#     score
+  Deep sky survey 8                4          5   0.03101
+  Deep sky survey 1                7         12   0.02881
+  Deep sky survey 10              10          9   0.02878
+  Deep sky survey 5                9         16   0.02765
+  Deep sky survey 3                8         19   0.02736
+  Deep sky survey 4                1          -   0.01639
+  Observation log 26               -          1   0.01639
+  Deep sky survey 9                2          -   0.01613
+  Observation log 34               -          2   0.01613
+  Deep sky survey 6                3          -   0.01587
+RESULT: OK
+
+=== Article snippet - exact kNN fusion (recommended path) ===
+  title                     lexical#  semantic#     score
+  Deep sky survey 8                4          5   0.03101
+  Deep sky survey 1                7         12   0.02881
+  Deep sky survey 10              10          9   0.02878
+  Deep sky survey 5                9         16   0.02765
+  Deep sky survey 3                8         19   0.02736
+  Deep sky survey 4                1          -   0.01639
+  Observation log 26               -          1   0.01639
+  Deep sky survey 9                2          -   0.01613
+  Observation log 34               -          2   0.01613
+  Deep sky survey 6                3          -   0.01587
+RESULT: OK

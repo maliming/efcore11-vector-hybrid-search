@@ -1,0 +1,19 @@
+@model ErrorViewModel
+@{
+    ViewData["Title"] = "Error";
+}
+
+<header class="hero hero--compact">
+    <div class="shell">
+        <h1>Something went wrong</h1>
+        <p class="hero-sub">The request could not be completed.</p>
+    </div>
+</header>
+
+<div class="shell">
+    @if (Model.ShowRequestId)
+    {
+        <p class="muted">Request ID: <code>@Model.RequestId</code></p>
+    }
+    <p><a class="back-link" asp-controller="Search" asp-action="Index">Back to search</a></p>
+</div>

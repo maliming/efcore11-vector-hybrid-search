@@ -1,0 +1,145 @@
+@model HelpCenterSearch.Controllers.SearchViewModel
+@{
+    ViewData["Title"] = "Help center search";
+
+    var hasQuery = !string.IsNullOrWhiteSpace(Model.Query);
+
+    // The columns are cut off at ten, so the ranks come from the deeper candidate lists: an article
+    // can be keyword #2 and semantic #11 at the same time.
+    var hybridRank = Model.Hybrid.Select((h, i) => (h.Id, Rank: i + 1)).ToDictionary(x => x.Id, x => x.Rank);
+    var hybridScore = Model.Hybrid.ToDictionary(h => h.Id, h => h.Score);
+
+    string Rank(Dictionary<int, int> ranks, int id) => ranks.TryGetValue(id, out var rank) ? rank.ToString() : "";
+
+    var columns = new (string Key, string Title, string Api, string Note, List<SearchHit> Hits)[]
+    {
+        ("semantic", "Semantic", "VectorDistance(\"cosine\", …)", "Exact nearest neighbours over the stored vectors.", Model.Semantic),
+        ("keyword", "Keyword", "FreeTextTable(query, topN)", "SQL Server full-text search, ordered by its own RANK.", Model.Keyword),
+        ("hybrid", "Hybrid", "RRF over rank positions", "Both lists fused on the position each result reached.", Model.Hybrid),
+    };
+
+    var examples = new[]
+    {
+        "session expires too quickly",
+        "card was declined",
+        "export finished with no rows",
+        "webhook keeps retrying"
+    };
+}
+
+<header class="hero">
+    <div class="shell">
+        <span class="hero-tag">EF Core 11 &middot; SQL Server 2025</span>
+        <h1>Help center search</h1>
+        <p class="hero-sub">
+            One query, three retrieval strategies, side by side. Pick any result to expand it.
+        </p>
+
+        <form class="search" method="get" role="search">
+            <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="11" cy="11" r="7" />
+                <path d="M16.5 16.5L21 21" />
+            </svg>
+            <input id="query" name="query" value="@Model.Query" autocomplete="off" autofocus
+                   aria-label="Search the help center"
+                   placeholder="Describe the problem, the way a customer would" />
+            <button type="submit">Search</button>
+        </form>
+
+        <div class="examples">
+            <span class="examples-label">Try</span>
+            @foreach (var example in examples)
+            {
+                <button type="button" class="chip js-example" data-query="@example">@example</button>
+            }
+        </div>
+    </div>
+</header>
+
+<div class="shell">
+    @if (!hasQuery)
+    {
+        <section class="intro">
+            @foreach (var column in columns)
+            {
+                <article class="intro-card col--@column.Key">
+                    <h2>@column.Title</h2>
+                    <code>@column.Api</code>
+                    <p>@column.Note</p>
+                </article>
+            }
+        </section>
+
+        <p class="intro-note">
+            The sample data is 32 help center articles across four topics. Each one keeps a
+            1,536-dimension embedding in a <code>vector(1536)</code> column next to its text, so one
+            database answers both kinds of question.
+        </p>
+    }
+    else
+    {
+        <div class="results-head">
+            <h2>Results for &ldquo;@Model.Query&rdquo;</h2>
+            <span class="muted">Click a result to expand it</span>
+        </div>
+
+        <section class="results">
+            @foreach (var column in columns)
+            {
+                <section class="col col--@column.Key">
+                    <header class="col-head">
+                        <h3>@column.Title</h3>
+                        <code>@column.Api</code>
+                    </header>
+
+                    @if (column.Hits.Count == 0)
+                    {
+                        <p class="col-empty">No results.</p>
+                    }
+                    else
+                    {
+                        <ol class="hits">
+                            @for (var i = 0; i < column.Hits.Count; i++)
+                            {
+                                var hit = column.Hits[i];
+                                <li>
+                                    <button type="button" class="hit js-hit"
+                                            data-article-id="@hit.Id"
+                                            data-title="@hit.Title"
+                                            data-topic="@hit.Topic"
+                                            data-semantic="@Rank(Model.SemanticPositions, hit.Id)"
+                                            data-keyword="@Rank(Model.KeywordPositions, hit.Id)"
+                                            data-hybrid="@Rank(hybridRank, hit.Id)"
+                                            data-score="@(hybridScore.TryGetValue(hit.Id, out var score) ? score.ToString("F5") : "")">
+                                        <span class="hit-rank">@(i + 1)</span>
+                                        <span class="hit-body">
+                                            <span class="hit-title">@hit.Title</span>
+                                            <span class="hit-meta">
+                                                <span class="topic" data-topic="@hit.Topic">@hit.Topic</span>
+                                                @if (column.Key == "hybrid")
+                                                {
+                                                    <span class="pos">keyword @(hit.LexicalPosition?.ToString() ?? "–")</span>
+                                                    <span class="pos">semantic @(hit.SemanticPosition?.ToString() ?? "–")</span>
+                                                    <span class="pos pos--score">@hit.Score.ToString("F5")</span>
+                                                }
+                                            </span>
+                                        </span>
+                                    </button>
+                                </li>
+                            }
+                        </ol>
+                    }
+                </section>
+            }
+        </section>
+
+        <section id="detail" class="detail" hidden aria-live="polite"
+                 data-details-url="@Url.Action("Details", "Search")">
+            <button type="button" class="detail-close js-detail-close" aria-label="Close">&times;</button>
+            <span class="topic" id="detail-topic"></span>
+            <h2 id="detail-title"></h2>
+            <div class="detail-ranks" id="detail-ranks"></div>
+            <div class="detail-body" id="detail-body"></div>
+        </section>
+    }
+</div>
