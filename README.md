@@ -8,6 +8,22 @@ projects target .NET 11 and EF Core `11.0.0-rc.1.26425.128`.
 | [`HelpCenterSearch`](HelpCenterSearch) | An ASP.NET Core MVC app that runs one query through semantic, keyword and hybrid retrieval and shows the three result lists side by side. Clicking a result expands it. |
 | [`VectorLab`](VectorLab) | A console probe that exercises each vector and full-text behaviour against a real server and prints what came back. The numbers the article measures come from a run of this. |
 
+## The web application
+
+One query, three retrieval strategies. Semantic search finds *Session expires too quickly* for the
+query "login keeps timing out" although the two share no words; keyword search pulls in the reporting
+article *Sign in sheet export template*; the fused list puts the authentication articles on top and
+pushes both false friends down.
+
+![Semantic, keyword and hybrid results side by side](images/demo-three-strategies.png)
+
+Clicking a result expands it. The panel shows the article, the position it reached in each list, and
+the state of its vector — `Came back with the entity: no`, because EF Core 11 leaves vector columns
+out of the SELECT that materializes an entity, so the values next to it come from a second query
+that projects the property explicitly.
+
+![The expanded article panel](images/demo-article-detail.png)
+
 ## Before you run anything
 
 Neither project stores a connection string. `HelpCenterSearch/appsettings.json` ships with a
